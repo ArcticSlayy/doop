@@ -26,6 +26,7 @@ body {
    whose query keeps a backslash, which must stay escaped. */
 :root {
   --probe-upper: URL(../raster/upper.svg);
+  --probe-hex: url('../raster/hex\20 file.svg');
 }
 .probe-kept {
   background-image: url(''), url('data:image/svg+xml,%3Csvg%2F%3E');

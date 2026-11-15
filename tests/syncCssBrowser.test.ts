@@ -25,6 +25,7 @@ describe.skipIf(!findBrowserPath())('design-sync stylesheet urls', () => {
     expect(html).toContain(`url("${fixtureUrl('raster/single.svg')}")`)
     expect(html).toContain(`url("${fixtureUrl('raster/upper.svg')}")`)
     expect(html).toContain('url(""), url("data:image/svg+xml,%3Csvg%2F%3E")')
+    expect(html).toContain(`url("${fixtureUrl('raster/hex%20file.svg')}")`)
     expect(html).toContain('url("#probe-mask")')
     expect(html).toContain(`url("${fixtureUrl('raster/q.svg')}?a\\\\b")`)
     expect(html).toContain('url("../inline.svg")')

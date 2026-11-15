@@ -100,7 +100,12 @@
     return css.replace(CSS_URL_RE, function (all, dq, sq, bare) {
       var raw = dq != null ? dq : sq != null ? sq : bare
       if (raw == null) return all
-      var u = raw.replace(/\\(.)/g, '$1')
+      // CSS escapes: up to six hex digits plus one optional whitespace terminator, else the next character
+      var u = raw.replace(/\\([0-9a-f]{1,6})[ \t\n\r\f]?|\\([\s\S])/gi, function (m, hex, ch) {
+        if (ch !== undefined) return ch
+        var cp = parseInt(hex, 16)
+        return cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? '\ufffd' : String.fromCodePoint(cp)
+      })
       if (!u || /^(data:|blob:|#)/i.test(u)) return all
       try {
         return 'url("' + new URL(u, base).href.replace(/["\\]/g, '\\$&') + '")'
