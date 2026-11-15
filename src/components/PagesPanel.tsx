@@ -346,7 +346,7 @@ export function PagesPanel({
           </Select>
         </div>
       )}
-      {onPagesPctChange && <PagesSplitHandle onChange={onPagesPctChange} />}
+      {onPagesPctChange && <PagesSplitHandle pct={pagesPct} onChange={onPagesPctChange} />}
     </div>
   )
 }
@@ -354,12 +354,31 @@ export function PagesPanel({
 /** The Pages section's bottom edge: dragged, or moved with the arrow keys, Home and End. Each step measures the
  *  section and its rail again, so it starts from what is on screen. The browser releases the pointer's capture
  *  when the drag ends, which resets the drag. */
-function PagesSplitHandle({ onChange }: { onChange: (pct: number) => void }) {
+function PagesSplitHandle({ pct, onChange }: { pct: number | null; onChange: (pct: number) => void }) {
   const t = useT()
   const drag = useRef<{ y: number; pagesPx: number; railPx: number } | null>(null)
+  const handle = useRef<HTMLDivElement>(null)
+  /* the window splitter pattern wants the split as a percentage of the rail, with its limits; the section's
+     laid-out height is the truth (a stored pct is clamped in CSS), so read it after each change */
+  const [range, setRange] = useState<{ now: number; min: number; max: number } | null>(null)
+  useEffect(() => {
+    if (!handle.current) return
+    const { pagesPx, railPx } = measurePages(handle.current)
+    if (railPx <= 0) return
+    // eslint-disable-next-line react/set-state-in-effect -- reads the laid-out DOM, an external system
+    setRange({
+      now: Math.round(pagesPctOf(pagesPx, railPx)),
+      min: Math.round(pagesPctOf(clampPagesPx(-Infinity, railPx), railPx)),
+      max: Math.round(pagesPctOf(clampPagesPx(Infinity, railPx), railPx)),
+    })
+  }, [pct])
   return (
     <div
+      ref={handle}
       role="separator"
+      aria-valuenow={range?.now}
+      aria-valuemin={range?.min}
+      aria-valuemax={range?.max}
       tabIndex={0}
       aria-orientation="horizontal"
       aria-label={t('panels.pagesResize')}

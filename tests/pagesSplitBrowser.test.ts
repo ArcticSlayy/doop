@@ -69,6 +69,25 @@ describe.skipIf(!findBrowserPath())('the Pages and Layers split', () => {
     expect(end.pages).toBeCloseTo(end.rail - LAYERS_MIN_PX, 0)
   })
 
+  it('reports the split to assistive tech as a percentage of the rail', async () => {
+    const { pages: pagesPx, rail } = await sizes()
+    const aria = await page.$eval('[data-slot="pages-split"]', (el) => ({
+      now: Number(el.getAttribute('aria-valuenow')),
+      min: Number(el.getAttribute('aria-valuemin')),
+      max: Number(el.getAttribute('aria-valuemax')),
+    }))
+    expect(aria.now).toBe(Math.round((pagesPx / rail) * 100))
+    expect(aria.min).toBeLessThanOrEqual(aria.now)
+    expect(aria.max).toBeGreaterThanOrEqual(aria.now)
+    await (await page.$('[data-slot="pages-split"]'))!.focus()
+    await page.keyboard.press('End')
+    await page.waitForFunction(
+      (max) => document.querySelector('[data-slot="pages-split"]')?.getAttribute('aria-valuenow') === String(max),
+      {},
+      aria.max,
+    )
+  })
+
   it('keeps the split when the page loads again', async () => {
     await dragSplit(-120)
     const dragged = await sizes()
