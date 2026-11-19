@@ -83,8 +83,12 @@ jobs:
           "$path" --version
           echo "CHROME_PATH=$path" >> "$GITHUB_ENV"
           # Ubuntu 24.04 lets only the browsers it has an AppArmor profile for
-          # make the user namespaces Chrome's sandbox needs
-          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns >/dev/null
+          # make the user namespaces Chrome's sandbox needs. The knob only
+          # exists on kernels that restrict unprivileged user namespaces;
+          # InstaBox's kernel does not, and it already allows them.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns >/dev/null
+          fi
       # `bun run test`, not `bun test`: the suite is vitest, and `bun test`
       # would run Bun's own runner against the same files
       - run: bun run test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
