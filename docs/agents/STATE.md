@@ -39,6 +39,8 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
 - `server/actions.ts` retains the fork's refusal when the streaming agent edits a design with an open `<doop-use>`.
   A whole-document edit finalizes the stream, so the refusal prevents slot loss. `tests/inlineData.test.ts` checks
   that the stream can still finish and place its slot content after the refused edit.
+- `server/componentEngine.ts` retains preflight validation of nested instance overrides in component templates.
+  `tests/componentDrops.test.ts` verifies a dry run rejects invalid nested HTML without changing the revision.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.
@@ -57,6 +59,10 @@ Devin flagged these in PR #29. The affected files match the upstream sync target
   versions. Undo recreates the current shape under a new frame ID, so its older versions are lost.
 - `src/components/FrameContextMenu.tsx` (`7769503`): menu Cut filters on the frame lock and can remove a standalone
   shape locked at the layer level.
+- `src/components/Stage.tsx` and `src/lib/elementLink.ts` (`698be62`): desktop prototype mail and phone links can
+  fail to open, and intra-canvas comment links omit the thread target.
+- `server/actions.ts` (`53475f8`): splitting an invalid component override across stream chunks can defer refusal
+  until finalization. The append-time check only examines the incoming chunk.
 
 ## CI gate (standing rules)
 

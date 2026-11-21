@@ -318,6 +318,14 @@ describe('an agent write that leaves a <doop-use> open (#528)', () => {
     expect(store.getComponents(canvasId).map((component) => component.name)).toEqual(['Card', 'Closed'])
 
     const closed = store.getComponents(canvasId).find((component) => component.name === 'Closed')!
+    const nested = JSON.stringify({ part: { use: { parts: { body: { html: '<doop-use component="Card">' } } } } })
+    const dryRun = await runComponentTool(
+      'update_component',
+      { component: 'Closed', html: `<div><doop-use component="Card" overrides='${nested}' /></div>`, dry_run: true },
+      context,
+    )
+    expect(dryRun).toMatchObject({ ok: false, error: expect.stringContaining('never closed') })
+    expect(store.getComponents(canvasId).find((component) => component.name === 'Closed')!.rev).toBe(closed.rev)
     const close = closed.template.lastIndexOf('</doop-use>')
     expect(close).toBeGreaterThan(-1)
     /* the edit drops the close: checked on the template as it would stand, a dry run included */

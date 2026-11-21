@@ -1156,7 +1156,28 @@ export function unclosedUses(html: string): string[] {
     cursor = span.end
   }
   const stuck = stuckUse(html, cursor, opaque)
-  return stuck === undefined ? refs : [...refs, stuck]
+  if (stuck !== undefined) refs.push(stuck)
+  /* A template dry run never expands its instances. Check the authored markup
+     its overrides carry as well, including nested instance parts. */
+  for (let at = nextTag(html, `<${USE_TAG}`, 0, opaque); at !== -1;) {
+    const end = tagEnd(html, at)
+    if (end === -1) break
+    const open = html.slice(at, end + 1)
+    if (/\soverrides\s*=/i.test(open)) {
+      const use = elementKids(parseFragment(`${open.replace(/\/>$/, '>')}</${USE_TAG}>`))[0]
+      if (use) collectUnclosedOverrideUses(asPartRecord(JSON_OBJECT(attrOf(use, 'overrides'))), refs)
+    }
+    at = nextTag(html, `<${USE_TAG}`, end + 1, opaque)
+  }
+  return refs
+}
+
+function collectUnclosedOverrideUses(parts: Record<string, PartOverride>, refs: string[]): void {
+  for (const part of Object.values(parts)) {
+    if (typeof part.html === 'string') refs.push(...unclosedUses(part.html))
+    if (typeof part.slot === 'string') refs.push(...unclosedUses(part.slot))
+    if (part.use?.parts) collectUnclosedOverrideUses(asPartRecord(part.use.parts), refs)
+  }
 }
 
 /** Every complete `<doop-use>` in the HTML, written out in full. One still missing
