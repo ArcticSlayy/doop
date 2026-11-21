@@ -27,6 +27,13 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
   implementations also match. The fork's workflow directory is unchanged by the merge.
 - The follow-up merge brings the sync to upstream `c14c91db2e4d889c3155bcf82fb849d3ef5bda3c` (22 commits since the
   previous sync). Upstream #557 adds distinct icons for component instances and merged cleanly.
+- The next automated sync passed and brought in #564 and #567 at `4ffbe9a`. A later sync parked its candidate in
+  PR #30 after one context-menu browser test timed out. That same test failed on upstream after #570 changed the
+  frame message listener, so this was an inherited test regression.
+- The follow-up sync takes upstream #569's engine-level refusal for unclosed `<doop-use>` writes and its tests,
+  replacing the earlier fork port's duplicate checks. `server/actions.ts`, `server/mcp.ts`, and `server/resident.ts`
+  retain `fit_height`, inline base64 refusal, and the stream idle refresh on base64 refusal. The frame-paper rule
+  and fork workflows are preserved. Upstream also incorporates the fork's previous importer fixes #278–#280.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.

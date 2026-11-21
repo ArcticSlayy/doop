@@ -8,7 +8,6 @@ import { fontsForCanvas } from './fonts.ts'
 import { libraryBrief, MAX_FONT_BYTES } from '../shared/fonts.ts'
 import { addCanvasFont, uploadedFontResult } from './canvasFontUpload.ts'
 import { inlineDataRefusal } from './inlineData.ts'
-import { frameWriteRefusal } from './frameWriteRefusal.ts'
 import { webFontsBrief } from '../shared/webFonts.ts'
 import {
   TOKEN_TYPES,
@@ -1984,8 +1983,8 @@ async function runResidentTool(
         }
         const html = completeHtml(raw.html)
         if (!html) return fail('create_frame requires a complete non-empty HTML document ending in </html>')
-        const refused = frameWriteRefusal(html, { surface: 'resident' })
-        if (refused) return fail(refused)
+        const inline = inlineDataRefusal(html, '', 'resident')
+        if (inline) return fail(inline)
         if (html.length > MAX_REWRITE_CHUNK_CHARS) {
           return fail(`create_frame HTML must be compact (at most ${MAX_REWRITE_CHUNK_CHARS} characters)`)
         }
@@ -2074,13 +2073,14 @@ async function runResidentTool(
           return fail(`"find" text occurs ${count} times — include more surrounding context to make it unique`)
         const replace = input.replace
         const edited = source.replace(input.find, () => replace)
-        /* the edited document, so a URI completed or a tag left open across the replacement's edges is caught too */
-        const refused = frameWriteRefusal(edited, {
-          existing: `${f.html}\n${compact}`,
-          surface: 'resident',
-          streamed: actions.isFrameMidStream(input.frame_id) ? f.html : '',
-        })
-        if (refused) return fail(refused)
+        /* the edited document, so a URI completed across the replacement's edges is caught too */
+        const inline = inlineDataRefusal(
+          edited,
+          `${f.html}
+${compact}`,
+          'resident',
+        )
+        if (inline) return fail(inline)
         actions.updateFrame(input.frame_id, { html: edited }, actor)
         runState.mutatedFrames.add(input.frame_id)
         unverify(runState, input.frame_id)
@@ -2101,9 +2101,10 @@ async function runResidentTool(
             `set_frame_html is limited to ${MAX_REWRITE_CHUNK_CHARS} characters. Use begin_frame_rewrite, append_frame_rewrite chunks, and commit_frame_rewrite.`,
           )
         }
-        const refused = frameWriteRefusal(html, { existing: existingHtml(f), surface: 'resident' })
-        if (refused) return fail(refused)
-        const written = actions.updateFrame(input.frame_id, { html }, actor)
+        const inline = inlineDataRefusal(html, existingHtml(f), 'resident')
+        if (inline) return fail(inline)
+        /* a whole-document write, as MCP set_frame_html: it may replace a design another agent streams */
+        const written = actions.updateFrame(input.frame_id, { html }, actor, { replace: true })
         if (!written) return fail('frame not found on this canvas')
         const fit =
           (block.input as { fit_height?: unknown }).fit_height === true
@@ -2155,11 +2156,10 @@ async function runResidentTool(
         const html = completeHtml(draft)
         if (!html)
           return fail('rewrite draft is not a complete HTML document ending in </html>; append the missing content')
-        /* again at the commit: the frame may have changed since the chunks were checked, and the
-           draft is whole only now, so a <doop-use> left open is caught here */
-        const refused = frameWriteRefusal(html, { existing: existingHtml(f), surface: 'resident' })
-        if (refused) return fail(refused)
-        actions.updateFrame(input.frame_id, { html }, actor)
+        /* again at the commit: the frame may have changed since the chunks were checked */
+        const inline = inlineDataRefusal(html, existingHtml(f), 'resident')
+        if (inline) return fail(inline)
+        actions.updateFrame(input.frame_id, { html }, actor, { replace: true })
         runState.rewriteDrafts.delete(input.frame_id)
         runState.mutatedFrames.add(input.frame_id)
         unverify(runState, input.frame_id)
