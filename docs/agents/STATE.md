@@ -44,6 +44,8 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
 - After upstream #565 made the HTML editor always visible, `src/components/Inspector.tsx` adopts any pending
   remote HTML when a clean editor gains focus. `tests/inspectorScrub.test.tsx` covers the refresh window and
   updates that arrive after focus. A dirty draft continues to be preserved.
+- Upstream #458 moves the image render budget into `shared/exportScale.ts` and reduces the density of oversized
+  exports to keep the whole frame. The merge keeps `server/renderLimits.ts`'s `designPx` helper for fit and PDF.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.
@@ -66,6 +68,8 @@ Devin flagged these in PR #29. The affected files match the upstream sync target
   fail to open, and intra-canvas comment links omit the thread target.
 - `server/actions.ts` (`53475f8`): splitting an invalid component override across stream chunks can defer refusal
   until finalization. The append-time check only examines the incoming chunk.
+- `src/components/SkillMenu.tsx` (`0ea7b4f`): a completion can consume a newline or exceed an automation prompt's
+  4,000-character limit, after which saving truncates the excess.
 
 ## CI gate (standing rules)
 
