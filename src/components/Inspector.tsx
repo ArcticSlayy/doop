@@ -396,7 +396,14 @@ export function Inspector({
               spellCheck={false}
               placeholder="<!doctype html>…"
               onChange={(e) => onHtmlChange(e.target.value)}
-              onFocus={() => setEditing(true)}
+              onFocus={() => {
+                /* Take the latest received HTML before focus pauses passive refreshes. */
+                if (saveState !== 'dirty' && frame.html !== draft) {
+                  lastPull.current = performance.now()
+                  setDraft(frame.html)
+                }
+                setEditing(true)
+              }}
               onBlur={() => setEditing(false)}
             />
           </div>

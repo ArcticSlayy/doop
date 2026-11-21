@@ -246,19 +246,22 @@ it('pulls a stream of remote updates into the editor at a capped rate, ending on
   expect(editor()).toBe('<h1>Three</h1>')
 })
 
-it('pulls in an update that arrived while the editor had focus once focus leaves', async () => {
+it('uses the latest clean draft on focus and still defers updates that arrive afterward', async () => {
   const editor = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit the HTML"]')!
   const remote = (html: string) =>
     act(() => useStore.getState().setCanvas({ ...useStore.getState().canvas!, frames: [{ ...stored(), html }] }))
   remote('<h1>One</h1>')
   /* the next update waits out the cap, and the editor takes focus meanwhile */
   remote('<h1>Two</h1>')
-  act(() => editor().focus())
-  await act(() => new Promise((resolve) => setTimeout(resolve, 300)))
   expect(editor().value).toBe('<h1>One</h1>')
-  act(() => editor().blur())
+  act(() => editor().focus())
+  expect(editor().value).toBe('<h1>Two</h1>')
+  remote('<h1>Three</h1>')
   await act(() => new Promise((resolve) => setTimeout(resolve, 300)))
   expect(editor().value).toBe('<h1>Two</h1>')
+  act(() => editor().blur())
+  await act(() => new Promise((resolve) => setTimeout(resolve, 300)))
+  expect(editor().value).toBe('<h1>Three</h1>')
 })
 
 it('keeps an edit whose save failed when focus leaves and a remote update arrives', async () => {

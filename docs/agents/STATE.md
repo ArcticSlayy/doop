@@ -41,6 +41,9 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
   that the stream can still finish and place its slot content after the refused edit.
 - `server/componentEngine.ts` retains preflight validation of nested instance overrides in component templates.
   `tests/componentDrops.test.ts` verifies a dry run rejects invalid nested HTML without changing the revision.
+- After upstream #565 made the HTML editor always visible, `src/components/Inspector.tsx` adopts any pending
+  remote HTML when a clean editor gains focus. `tests/inspectorScrub.test.tsx` covers the refresh window and
+  updates that arrive after focus. A dirty draft continues to be preserved.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.
