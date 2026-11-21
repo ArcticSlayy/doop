@@ -34,6 +34,8 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
   replacing the earlier fork port's duplicate checks. `server/actions.ts`, `server/mcp.ts`, and `server/resident.ts`
   retain `fit_height`, inline base64 refusal, and the stream idle refresh on base64 refusal. The frame-paper rule
   and fork workflows are preserved. Upstream also incorporates the fork's previous importer fixes #278–#280.
+- Upstream #573 (`33db020`) is included as a merge commit. Its browser fixture delays messages before the runtime
+  handles them and releases the saved message from the parent window. The context-menu regression stays enabled.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.
@@ -231,7 +233,7 @@ replaces our copy and the entry can go. The 2026-11-18 ports (#21 to #25) also e
 `server/pageTools.ts`, `server/renderLimits.ts`, `.context/TECHSTACK.md` (fit_height, `<doop-use>` refusal);
 `src/lib/frameDropRuntime.ts` (`freeSurface`); tests `frameHtml`, `inlineData`, `componentDrops`, `componentSoftDelete`,
 `residentApproval`, `residentPageTools`, `residentTokenWork`, `workBudgetCommit`, `drawingReorderBrowser`. New upstream
-files that came with them: `server/frameFit.ts`, `server/frameWriteRefusal.ts`, `server/pageShim.ts`,
+files that came with them: `server/frameFit.ts`, `server/pageShim.ts`,
 `tests/frameFit.test.ts`, `tests/measureGate.ts`. Upstream #439 absorbed the pan changes and `tests/panelResizing.test.tsx`.
 Also: `.github/workflows/` differs from upstream by design (`android.yml` is
 upstream's and is not taken).
