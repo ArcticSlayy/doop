@@ -36,6 +36,9 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
   and fork workflows are preserved. Upstream also incorporates the fork's previous importer fixes #278–#280.
 - Upstream #573 (`33db020`) is included as a merge commit. Its browser fixture delays messages before the runtime
   handles them and releases the saved message from the parent window. The context-menu regression stays enabled.
+- `server/actions.ts` retains the fork's refusal when the streaming agent edits a design with an open `<doop-use>`.
+  A whole-document edit finalizes the stream, so the refusal prevents slot loss. `tests/inlineData.test.ts` checks
+  that the stream can still finish and place its slot content after the refused edit.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.

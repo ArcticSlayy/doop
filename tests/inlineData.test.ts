@@ -480,7 +480,7 @@ describe('over MCP', () => {
     expect(store.getFrame(frameId)!.html).toBe(before)
   })
 
-  it('lets the streaming agent edit its frame mid-stream, and tells another agent to wait or replace it', async () => {
+  it('keeps an unfinished component intact when either agent edits the stream', async () => {
     await makeCard()
     await call('create_frame', { canvas_id: canvasId, name: 'Stream', html: doc('') })
     const frameId = frames().find((frame) => frame.name === 'Stream')!.id
@@ -503,10 +503,19 @@ describe('over MCP', () => {
     expect(store.getFrame(frameId)!.html).toBe(streamed)
     expect(actions.isFrameMidStream(frameId)).toBe(true)
 
-    /* the streaming agent's own edit is not a whole write: its next chunks close the tag */
+    /* An edit is a whole write even for the streaming agent. Keep the waiting slot intact. */
     const own = await call('edit_frame_html', { frame_id: frameId, old_str: '<h1>Top</h1>', new_str: '<h1>Top!</h1>' })
-    expect(own.isError).toBe(false)
-    expect(store.getFrame(frameId)!.html).toContain('<h1>Top!</h1>')
+    expect(own.isError).toBe(true)
+    expect(own.text).toContain('never closed')
+    expect(store.getFrame(frameId)!.html).toBe(streamed)
+    expect(actions.isFrameMidStream(frameId)).toBe(true)
+    const done = await call('append_frame_html', {
+      frame_id: frameId,
+      html_chunk: '</doop-use></body></html>',
+      done: true,
+    })
+    expect(done.isError).toBe(false)
+    expect(store.getFrame(frameId)!.html).toMatch(/<article\b[^>]*>[\s\S]*<p>slot<\/p>[\s\S]*<\/article>/)
 
     /* a set replaces the whole document, waiting tag and all: from any agent, a balanced one goes through */
     await call('append_frame_html', {

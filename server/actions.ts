@@ -2610,14 +2610,12 @@ export const createFrame = atomic(function createFrame(
 })
 
 /** Whether this design write is refused, rather than saved with a note, when it leaves a
- *  `<doop-use>` open: an agent's whole write. A frame mid-stream holds its stream's waiting tags:
- *  the streaming agent's own edit of it is not whole (its next chunks close them), another
- *  agent's is refused outright unless it replaces the design (set_frame_html). */
+ *  `<doop-use>` open: an agent's whole write. Even the streaming agent's edit is a whole write
+ *  here and ends the stream if it changes HTML. Another agent must wait or explicitly replace it. */
 function refusesUnclosed(frameId: string, actor: Actor, replace: boolean): boolean {
   if (actor.kind !== 'agent') return false
   const stream = streams.get(frameId)
-  if (!stream || replace) return true
-  if (stream.actor.name === actor.name) return false
+  if (!stream || replace || stream.actor.name === actor.name) return true
   throw new WriteRefusedError(
     `Refused, nothing was written: ${stream.actor.name} is streaming this frame. Wait for its stream to finish, or replace the whole design with set_frame_html.`,
   )

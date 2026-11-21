@@ -1049,8 +1049,8 @@ data-doop-webfonts>` for the roster families the frame names and does not load i
   Slot and override markup is whole, so it always expands as a whole write, mid-stream too
   (`expandOverride`, its issues `inOverride`): a stream chunk whose override leaves a use open is
   refused at once, since no later chunk closes it. A refused chunk leaves the stream open, its idle
-  clock restarted. Mid-stream, the streaming
-  agent's own edit is not a whole write; another agent's is refused unless it replaces the design
+  clock restarted. An edit that leaves a use open is refused even for the streaming agent, since
+  a successful design edit finalizes the stream. Another agent's edit is refused unless it replaces the design
   (`replace`: MCP and resident `set_frame_html`, the resident's rewrite commit). The scanner skips
   `<doop-use` text in scripts, styles, textareas, titles and comments and in names like
   `<doop-user-chip>`. Tests: `componentDrops.test.ts`, the `<doop-use>` cases in `inlineData.test.ts`.
