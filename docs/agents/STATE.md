@@ -25,6 +25,8 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
 - `tests/residentPageTools.test.ts`: retained both the upstream canvas-title tests and the ported fit tests.
 - Upstream's #439 pan implementation matches the merged `Stage.tsx` byte for byte. Its panel and stylesheet
   implementations also match. The fork's workflow directory is unchanged by the merge.
+- The follow-up merge brings the sync to upstream `c14c91db2e4d889c3155bcf82fb849d3ef5bda3c` (22 commits since the
+  previous sync). Upstream #557 adds distinct icons for component instances and merged cleanly.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.
@@ -51,6 +53,10 @@ Devin flagged these in PR #29. The affected files match the upstream sync target
    outcome, including the pinned-Chrome install and the full test run); otherwise it parks the merge on a PR or opens
    an issue. Confirmed by reading the workflow, and by the scratch run.
 3. Before each merge, check that main is green; if main is red, fix main first.
+
+The Nov. 21 fork PR queued all CI jobs for `instabox-medium` without an assigned runner, and the repository runner
+listing returned zero. The fork-owned `ci.yml` returns all six jobs to `ubuntu-latest`, the runner label used before
+the #28 trial. The checks, four test shards and pinned Chrome setup remain in the workflow.
 
 Known flaky tests: the browser tests in `elementPanelBrowser.test.ts` and `canvasClipboardBrowser.test.ts` fail
 intermittently on the fork's runners with 5 s waits (see the Flaky tests section). One is skipped: "keeps multiple
