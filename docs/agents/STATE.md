@@ -27,6 +27,25 @@ Arctic OKs the RAM (self-hosting on `localhost:4300` waits for that and for impr
   implementations also match. The fork's workflow directory is unchanged by the merge.
 - The follow-up merge brings the sync to upstream `c14c91db2e4d889c3155bcf82fb849d3ef5bda3c` (22 commits since the
   previous sync). Upstream #557 adds distinct icons for component instances and merged cleanly.
+- The next automated sync passed and brought in #564 and #567 at `4ffbe9a`. A later sync parked its candidate in
+  PR #30 after one context-menu browser test timed out. That same test failed on upstream after #570 changed the
+  frame message listener, so this was an inherited test regression.
+- The follow-up sync takes upstream #569's engine-level refusal for unclosed `<doop-use>` writes and its tests,
+  replacing the earlier fork port's duplicate checks. `server/actions.ts`, `server/mcp.ts`, and `server/resident.ts`
+  retain `fit_height`, inline base64 refusal, and the stream idle refresh on base64 refusal. The frame-paper rule
+  and fork workflows are preserved. Upstream also incorporates the fork's previous importer fixes #278–#280.
+- Upstream #573 (`33db020`) is included as a merge commit. Its browser fixture delays messages before the runtime
+  handles them and releases the saved message from the parent window. The context-menu regression stays enabled.
+- `server/actions.ts` retains the fork's refusal when the streaming agent edits a design with an open `<doop-use>`.
+  A whole-document edit finalizes the stream, so the refusal prevents slot loss. `tests/inlineData.test.ts` checks
+  that the stream can still finish and place its slot content after the refused edit.
+- `server/componentEngine.ts` retains preflight validation of nested instance overrides in component templates.
+  `tests/componentDrops.test.ts` verifies a dry run rejects invalid nested HTML without changing the revision.
+- After upstream #565 made the HTML editor always visible, `src/components/Inspector.tsx` adopts any pending
+  remote HTML when a clean editor gains focus. `tests/inspectorScrub.test.tsx` covers the refresh window and
+  updates that arrive after focus. A dirty draft continues to be preserved.
+- Upstream #458 moves the image render budget into `shared/exportScale.ts` and reduces the density of oversized
+  exports to keep the whole frame. The merge keeps `server/renderLimits.ts`'s `designPx` helper for fit and PDF.
 - Automation: `.github/workflows/sync-upstream.yml`, daily 09:23 UTC plus manual dispatch. It runs on GitHub, with no
   local scheduled task. Green: pushes to `main`. Red: parks the merge on `sync/upstream` and opens one PR.
   Conflict: opens one issue, pushes nothing. Nothing new: does nothing.
@@ -45,6 +64,12 @@ Devin flagged these in PR #29. The affected files match the upstream sync target
   versions. Undo recreates the current shape under a new frame ID, so its older versions are lost.
 - `src/components/FrameContextMenu.tsx` (`7769503`): menu Cut filters on the frame lock and can remove a standalone
   shape locked at the layer level.
+- `src/components/Stage.tsx` and `src/lib/elementLink.ts` (`698be62`): desktop prototype mail and phone links can
+  fail to open, and intra-canvas comment links omit the thread target.
+- `server/actions.ts` (`53475f8`): splitting an invalid component override across stream chunks can defer refusal
+  until finalization. The append-time check only examines the incoming chunk.
+- `src/components/SkillMenu.tsx` (`0ea7b4f`): a completion can consume a newline or exceed an automation prompt's
+  4,000-character limit, after which saving truncates the excess.
 
 ## CI gate (standing rules)
 
@@ -224,7 +249,7 @@ replaces our copy and the entry can go. The 2026-11-18 ports (#21 to #25) also e
 `server/pageTools.ts`, `server/renderLimits.ts`, `.context/TECHSTACK.md` (fit_height, `<doop-use>` refusal);
 `src/lib/frameDropRuntime.ts` (`freeSurface`); tests `frameHtml`, `inlineData`, `componentDrops`, `componentSoftDelete`,
 `residentApproval`, `residentPageTools`, `residentTokenWork`, `workBudgetCommit`, `drawingReorderBrowser`. New upstream
-files that came with them: `server/frameFit.ts`, `server/frameWriteRefusal.ts`, `server/pageShim.ts`,
+files that came with them: `server/frameFit.ts`, `server/pageShim.ts`,
 `tests/frameFit.test.ts`, `tests/measureGate.ts`. Upstream #439 absorbed the pan changes and `tests/panelResizing.test.tsx`.
 Also: `.github/workflows/` differs from upstream by design (`android.yml` is
 upstream's and is not taken).

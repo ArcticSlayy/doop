@@ -35,6 +35,21 @@
   back to frame details if nothing carries the id. Browser regressions in
   `tests/pageCanvasBrowser.test.ts` cover initial loading, cross-page links, stamping on copy,
   clipboard round trips, history and script-created or script-removed elements.
+  Links inside a frame are followed with ⌘-click (Ctrl elsewhere) in Select (`resolveFrameLink`),
+  every link the way a browser would take it: a link to a frame of the open canvas moves the camera
+  there (`Stage.followFrameLink`), a page link switches to that page, `#id` scrolls the frame's own
+  document (`doop:anchor`; a bare `#` to the top), and anything else opens in a new tab (a relative
+  path against Doop's origin; the system browser in the desktop shell), `mailto:` and `tel:` in
+  their app. Never followed: a scheme outside http(s), mailto and tel (`javascript:`, `data:`), and
+  a link into this canvas naming a frame or page that is gone or hidden. Only while the chord is
+  held does a followable link wear a hand cursor and a brand outline (`useLinkModifier`, the
+  runtime's `linkRect`); a plain click still selects. The browser can show a frame document's own
+  cursor through the shield (a link's hand), so the frame wears the surface's cursor (`doop:cursor`,
+  the runtime's `vCursorSheet`) except while text is edited; the prototype player sends none, so a
+  played design keeps its cursors. In a text edit, a click on nothing editable ends the edit as
+  Escape does (not the click ending a text drag that let go past the text). Tests:
+  `frameLinkTarget.test.ts`, the link case in `tests/pageCanvasBrowser.test.ts`, the cursor case in
+  `richTextBrowser.test.ts`.
 - Page links are `/c/<canvasId>?page=<pageId>` (`src/lib/pageLink.ts`, pure). `openingPageId` is
   the one rule for the page a canvas URL opens: the page of the frame it links, else the page it
   names, else the default (the first page; on a library canvas its components page, see Workspace
@@ -98,7 +113,7 @@
   agents are `AgentRole`s with `custom: true`: a fixed handle (its role id and its only @mention
   spelling) and name (its presence identity), editable colour, one-liner, instructions (up to 2,000
   characters) and reviewer flag, at most 20 per scope, in `custom_agents`. `scope` is `ws:<id>` or
-  `user:<id>` in both tables (migration 0057), mirrored in memory. Instructions a team wrote (a
+  `user:<id>` in both tables (migration 0057), mirrored in memory. A table keyed this way (agents, overrides, skills) is dropped in both `deleteWorkspace` and `purgeUserData`; `accountDeletion.test.ts` counts the drops. Instructions a team wrote (a
   custom agent's, a rewritten built-in's: `briefByTeam`) sit in the resident's system prompt inside
   `<role_instructions>`, under the shared rules. Every role lookup takes a `Roster`
   (`actions.canvasRoster` / `rosterFor` on the server, `useRoster` / `useCanvasRoster` in the
@@ -110,6 +125,25 @@
   is checked again when it runs) and `get_canvas` (`customAgents`) read it. Work left for an agent
   that is deleted or off goes to Doop. Routes: `/api/agents` and `/api/agents/builtin`
   (`?workspace=`, members only). Tests: `customAgents.test.ts`, `customAgentsHttp.test.ts`.
+- Skills (`.context/specs/skills.md`, `shared/skills.ts`, `server/skills.ts`, `server/skillRoutes.ts`,
+  `src/components/Skills.tsx`): named instructions a workspace (Workspace → Agents) or a person
+  (Settings → Doop Agent, for their personal canvases) writes once, at most 50 per scope, in
+  `skills` (migration 0060, `scope` as in `custom_agents`, mirrored in memory). A handle
+  (`brand-check`) is fixed once created. `/handle` in a request asks for one: `skillHandlesIn`
+  finds a `/handle` that starts the text or follows whitespace or `(` and ends at whitespace or
+  punctuation, so paths and URLs are never skills. The resident run scans its cards, comments,
+  feedback, each feedback's task and what came before each comment in its thread
+  and the instructions a team wrote for the running agent
+  (`requestedSkillsPrompt` in `server/resident.ts`), and `skillsBlock` adds the bodies of the
+  first five the canvas's scope has as a cached system block after the guidelines, on both the API
+  and harness paths; a handle with no skill changes nothing. Skill text never reaches canvas
+  viewers. Route: `/api/skills` (`?workspace=`, members only). Typing `/` in the composer, a
+  comment, a reply, an automation's agent step, Home's prompt box or an agent's Instructions opens `useSkillMenu` (`src/components/SkillMenu.tsx`,
+  `partialHandleAt`), fed by `GET /api/canvases/:id/skills` (edit role, handle and description
+  only, plus `addIn`: where this viewer may add one); Home, before its canvas exists, reads
+  `/api/skills` for the scope it will make the canvas in. The composer also has a Skills button that
+  writes the `/`, and its menu ends with "New skill", the skills card's form via `?skill=new`. Tests: `skills.test.ts`, `skillsHttp.test.ts`, `residentSkills.test.ts`,
+  `skillMenu.test.tsx`, `skillsCard.test.tsx`, `agentInstructionsSkills.test.tsx`.
 - Agent feedback (`server/agentFeedback.ts`, `shared/agentFeedback.ts`): agents talk to the Doop
   team through two MCP tools, which the resident agent has under the same names. `report_issue`
   (kind `issue`: `bug`, `tool_error`, `confusing`, `missing_capability`, `other`) is for where Doop
@@ -415,7 +449,8 @@ data-doop-webfonts>` for the roster families the frame names and does not load i
   `copyElementPng`): the frame is rendered whole and cut to the element's live box
   (`doop:inspect` rect, `clipToFrame`, the raster's `clip` option), so every style it inherits
   and whatever paints behind it stay in the picture; a server render is cropped here the same
-  way (`cropRaster`), and a frame off screen says so. The element panel's Design tab ends with the same
+  way (`cropRaster`), unless a full screenshot would reduce a small layer’s density, in which case Chromium captures
+  the layer by selector. A frame off screen says so. The element panel's Design tab ends with the same
   Export section (`LayerExportSection.tsx`: the shared scale and format, "Export <layer>", Copy as
   PNG), as Figma ends a layer's properties. Agents export a layer with `export_layer` (MCP and the
   resident, `server/layerExport.ts`), named by `element_id` (its `data-doop-id`) or a CSS
@@ -431,7 +466,9 @@ data-doop-webfonts>` for the roster families the frame names and does not load i
   named `Name@2x.png` as Figma does. Up to 2x a scale is honoured as before; above it,
   `fitExportScale` brings a huge frame down to 16,384 px a side and 64 MP, the same limit
   for the browser render, `/i/<id>.png?scale=` (any parsed scale, 1x when unreadable) and MCP
-  `export_frame`'s `scale`, and the toast says so. SVG is `frameSvg`: the inlined document
+  `export_frame`'s `scale`. Full-frame server exports then reduce density only when the
+  screenshot would otherwise lose rows at Chromium’s 50 MP capture limit. The download names
+  the density actually used, and the toast reports a reduction. SVG is `frameSvg`: the inlined document
   `inlineDocument` already builds, cropped by `viewBox` for an element, on white, settled for
   a file opened as a page, where the viewer's window would be the viewport (`standalone`,
   `FrameViewport`): viewport units become the frame's px, `@media` rules and `<style media>` are
@@ -1021,26 +1058,24 @@ data-doop-webfonts>` for the roster families the frame names and does not load i
   `componentTools.test.ts`, `componentsRoutes.test.ts`, `componentsBrowser.test.ts`. A bare
   `data-doop-prop="name"` binds an element's text, except where there is none: on `img`, `source`,
   `video`, `audio`, `iframe` and `embed` it binds `src`, on `input` its `value` (`parseBindings`
-  takes the tag). A `<doop-use>` that renders nothing is reported, never dropped quietly: a main
-  with no markup (`empty_template`), and on a whole write one never closed (`unclosed_use`), which
-  is placed with no slot content so the ones after it still expand (mid-stream it waits for its
-  end). A whole write that leaves one open is refused before anything is saved, naming each tag
-  (`unclosedUseRefusal` in `server/components.ts`, on the document as it would be saved, an escaped
-  one decoded): an agent's frame write (`frameWriteRefusal`: MCP `create_frame`, `set_frame_html`,
-  `edit_frame_html` on the edited document, the resident's create, set, edit and rewrite commit), an
-  MCP stream's `done` chunk (`streamedDocument`; a refused chunk keeps the stream from going idle,
-  `markStreamActive`, while it comes again with the close), and any caller's component template as
-  made or updated, find + replace and dry runs included (`createComponentFromHtml`,
-  `updateComponent`), and an instance override's `html` or `slot` (`changeInstances`, which
-  `update_instances` calls). One left waiting by an unfinished stream counts too, since the write
-  would place it: an edit on top of a stream is told the frame is still streaming. The engine's
-  reader (`nextTag`) skips a tag inside a script, style, textarea, title or comment, and a custom
-  element whose name starts the same, inside a use as well as before it; a tag whose end cannot be
-  read (a quote never closed) counts as open, since nothing after it is read either. The markup a
-  use's `overrides` attribute carries (`html`, `slot`, nested instances' parts; `overrideMarkup`) is
-  read the same way, since each piece expands on its own. Only an idle stream's settling and a
-  human's write (an inspector save, the REST `/append`) still place one and report it (#528). Tests:
-  `componentDrops.test.ts`, the `<doop-use>` cases in `inlineData.test.ts`.
+  takes the tag). A `<doop-use>` that renders nothing is reported, never dropped quietly: a main with
+  no markup (`empty_template`), and on a whole write one never closed (`unclosed_use`), which is
+  placed with no slot content so the ones after it still expand (mid-stream it waits for its
+  end). That placement is a person's only (editor, REST `/append`, an idle stream's settling): an
+  agent's whole write is refused instead (#528), from the engine's own report
+  (`prepareFrameHtml`'s `refuseUnclosed`, set by `updateFrame`, `createFrame` and a stream's `done`
+  chunk for agent actors, override markup included; `changeInstances` likewise), and a component
+  template by `refuseUnclosedTemplate` (`unclosedUses`, the same scanner). The refusal is a
+  `WriteRefusedError` (`server/writeRefusal.ts`): the operation undoes the write, and the MCP tool
+  wrapper (`toolLoads.ts`), `runComponentTool` and the resident's tool call answer with its message.
+  Slot and override markup is whole, so it always expands as a whole write, mid-stream too
+  (`expandOverride`, its issues `inOverride`): a stream chunk whose override leaves a use open is
+  refused at once, since no later chunk closes it. A refused chunk leaves the stream open, its idle
+  clock restarted. An edit that leaves a use open is refused even for the streaming agent, since
+  a successful design edit finalizes the stream. Another agent's edit is refused unless it replaces the design
+  (`replace`: MCP and resident `set_frame_html`, the resident's rewrite commit). The scanner skips
+  `<doop-use` text in scripts, styles, textareas, titles and comments and in names like
+  `<doop-user-chip>`. Tests: `componentDrops.test.ts`, the `<doop-use>` cases in `inlineData.test.ts`.
 - Component system first (`SYSTEM_FIRST`, `COMPOSE_CHECK` in `server/guide.ts`): the guide opens
   with a must-do list (tokens, then a component system set up the way a designer sets up a Figma
   file, then screens composed from it; themes are tokens, never a copied frame), the brief creates

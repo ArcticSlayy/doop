@@ -29,8 +29,6 @@ import { customAgentsForCanvas } from './customAgents.ts'
 import { describeLibrary, libraryBrief, MAX_FONT_BYTES } from '../shared/fonts.ts'
 import { addCanvasFont, uploadedFontResult } from './canvasFontUpload.ts'
 import { EMBEDDED_MIN_LENGTH, inlineDataRefusal } from './inlineData.ts'
-import { unclosedUseRefusal } from './components.ts'
-import { frameWriteRefusal } from './frameWriteRefusal.ts'
 import {
   MAX_TOKEN_DESCRIPTION,
   TOKEN_TYPES,
@@ -64,13 +62,15 @@ import {
   takePdfExportSlot,
 } from './pdfExport.ts'
 import { primeImage } from './previews.ts'
-import { MAX_LAYER_SELECTOR_CHARS, layerExport } from './layerExport.ts'
+import { MAX_LAYER_SELECTOR_CHARS } from '../shared/elementId.ts'
+import { layerExport } from './layerExport.ts'
 import {
   DEFAULT_EXPORT_SCALE,
   MAX_EXPORT_SCALE,
   MIN_EXPORT_SCALE,
   exportPixelSize,
   fitExportScale,
+  fullFrameRenderScale,
   parseExportScale,
 } from '../shared/exportScale.ts'
 import { COMPOSE_CHECK, GUIDE_TOPIC_SUMMARIES, GUIDE_TOPICS, guideFor } from './guide.ts'
@@ -1543,8 +1543,8 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
     async ({ canvas_id, pageId, name, html, x, y, width, height, fit_height, agent_name }) => {
       if (!canvasFor(canvas_id, 'edit')) return noCanvas(canvas_id)
       if (fit_height && !html.trim()) return err(FIT_NEEDS_HTML)
-      const refused = frameWriteRefusal(html)
-      if (refused) return err(refused)
+      const inline = inlineDataRefusal(html)
+      if (inline) return err(inline)
       const created = actions.createFrame(canvas_id, { name, pageId, html, x, y, width, height }, actorFrom(agent_name))
       if (!created) return noCanvas(canvas_id)
       const fit = fit_height ? await fitWrittenFrame(created, actorFrom(agent_name)) : undefined
@@ -1626,8 +1626,8 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
     async ({ frame_id, html, fit_height, agent_name }) => {
       const current = frameFor(frame_id, 'edit')
       if (!current) return noFrame(frame_id)
-      const refused = frameWriteRefusal(html, { existing: heldForms(current) })
-      if (refused) return err(refused)
+      const inline = inlineDataRefusal(html, heldForms(current))
+      if (inline) return err(inline)
       const written = actions.updateFrame(frame_id, { html }, actorFrom(agent_name), { replace: true })
       if (!written) return noFrame(frame_id)
       const fit = fit_height ? await fitWrittenFrame(written, actorFrom(agent_name)) : undefined
@@ -1693,11 +1693,12 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
       if (format === 'pdf') return exportPdf(f, frame_ids ?? [])
       const ext = format === 'jpg' ? 'jpg' : 'png'
       const q = ext === 'jpg' ? `&quality=${quality ?? 90}` : ''
-      const density = fitExportScale(f, parseExportScale(scale ?? DEFAULT_EXPORT_SCALE) ?? DEFAULT_EXPORT_SCALE)
-      const pixels = exportPixelSize(f, density)
+      const requested = fitExportScale(f, parseExportScale(scale ?? DEFAULT_EXPORT_SCALE) ?? DEFAULT_EXPORT_SCALE)
+      const density = fullFrameRenderScale(f, requested)
+      const pixels = exportPixelSize({ width: Math.round(f.width), height: Math.round(f.height) }, density)
       return text({
-        image_url: `${env.BETTER_AUTH_URL}/i/${frame_id}.${ext}?scale=${density}${q}`,
-        download_url: `${env.BETTER_AUTH_URL}/i/${frame_id}.${ext}?scale=${density}${q}&download`,
+        image_url: `${env.BETTER_AUTH_URL}/i/${frame_id}.${ext}?scale=${requested}${q}`,
+        download_url: `${env.BETTER_AUTH_URL}/i/${frame_id}.${ext}?scale=${requested}${q}&download`,
         scale: density,
         width: pixels.width,
         height: pixels.height,
@@ -2507,14 +2508,9 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
       const inline = completes
         ? `${refusal.replace('Refused, nothing was written:', 'Refused, this chunk was not written:')}\nThe size above counts what your earlier chunks sent too: the start of that block is already in the frame. Begin the frame again (start=true) and stream it without the block.`
         : refusal
-      /* the last chunk makes the document whole (mid-stream the stored HTML keeps a waiting
-         <doop-use> as written): one still open would be placed empty, so the chunk is refused.
-         A refused chunk keeps the stream from going idle while it comes again */
-      const refused =
-        inline ?? (done ? unclosedUseRefusal(actions.streamedDocument(frame_id, html_chunk, start) ?? '') : null)
-      if (refused) {
+      if (inline) {
         actions.markStreamActive(frame_id)
-        return err(refused)
+        return err(inline)
       }
       const frame = actions.appendFrameHtml(frame_id, html_chunk, actorFrom(agent_name), { start, done })
       if (!frame) return noFrame(frame_id)
@@ -2560,12 +2556,9 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
       if (!f) return noFrame(frame_id)
       const edited = editFrameSource(f, old_str, new_str)
       if ('error' in edited) return err(edited.error)
-      /* the edited document, so a URI completed or a tag left open across the replacement's edges is caught too */
-      const refused = frameWriteRefusal(edited.html, {
-        existing: heldForms(f),
-        streamed: actions.isFrameMidStream(frame_id) ? f.html : '',
-      })
-      if (refused) return err(refused)
+      /* the edited document, so a URI completed across the replacement's edges is caught too */
+      const inline = inlineDataRefusal(edited.html, heldForms(f))
+      if (inline) return err(inline)
       const frame = actions.updateFrame(frame_id, { html: edited.html }, actorFrom(agent_name))!
       return withPreview(
         withStatusNudge(

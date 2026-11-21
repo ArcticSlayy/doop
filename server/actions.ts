@@ -14,7 +14,14 @@ import {
   recordUndo,
   transaction,
 } from './journal.ts'
-import { dedupeIssues, prepareChunk, prepareFrameHtml, referencesComponent, rederiveFromMains } from './components.ts'
+import {
+  dedupeIssues,
+  prepareChunk,
+  prepareFrameHtml,
+  referencesComponent,
+  rederiveFromMains,
+  refuseUnclosedUses,
+} from './components.ts'
 import { COMPONENT_ATTR, isDeleted, isHollow, type ComponentDef, type ComponentIssue } from '../shared/components.ts'
 import { MAX_DECISION_CHARS } from '../shared/designDecisions.ts'
 import { MAX_PAGES, PageLimitError, store } from './store.ts'
@@ -42,6 +49,7 @@ import { decodeEscapedHtml, looksEscapedHtml, repairEscapedHtml } from './escape
 import { forgetLibrary } from './componentLibrary.ts'
 import { withCanvasFaces, withCanvasFacesMidStream } from './canvasFaces.ts'
 import { EMBEDDED_MIN_LENGTH } from './inlineData.ts'
+import { WriteRefusedError } from './writeRefusal.ts'
 import {
   MAX_TOKENS,
   MAX_TOKEN_DESCRIPTION,
@@ -2075,11 +2083,11 @@ function prepareWrite(
   html: string,
   priorHtml: string,
   by: string,
-  carried: ComponentIssue[] = [],
+  { carried = [], refuseUnclosed = false }: { carried?: ComponentIssue[]; refuseUnclosed?: boolean } = {},
 ) {
   const canvas = store.getCanvas(canvasId)
   if (!canvas) return { html, changed: [] as ComponentDef[] }
-  const prepared = prepareFrameHtml(canvas, frameId, html, by, priorHtml)
+  const prepared = prepareFrameHtml(canvas, frameId, html, by, priorHtml, { refuseUnclosed })
   const issues = dedupeIssues([...carried, ...prepared.issues])
   if (issues.length) setKey(componentIssues, frameId, issues)
   else dropKey(componentIssues, frameId)
@@ -2385,23 +2393,6 @@ function healFromMain(canvas: Canvas, frame: Frame, ids: ReadonlySet<string>) {
   if (next) broadcast(canvas.id, { type: 'frame:updated', frame: next, actor })
 }
 
-/** A chunk as its stream reads it. An agent that escapes its opening chunk escapes the whole
- *  stream, so the verdict is latched there: a chunk mid-design can hold a legitimate `&lt;` (a
- *  code sample) and must never be sniffed on its own. */
-function streamPiece(frameId: string, chunk: string, starting: boolean): { escaped: boolean; piece: string } {
-  const escaped = starting ? looksEscapedHtml(chunk) : (streams.get(frameId)?.escaped ?? false)
-  return { escaped, piece: escaped ? decodeEscapedHtml(chunk) : chunk }
-}
-
-/** The document appendFrameHtml would make of this chunk, before its component pass: decoded
- *  as its stream reads it, after what the stream has written so far. */
-export function streamedDocument(frameId: string, chunk: string, start = false): string | undefined {
-  const before = store.getFrame(frameId)
-  if (!before) return undefined
-  const { piece } = streamPiece(frameId, chunk, start || !streams.has(frameId))
-  return start ? piece : before.html + piece
-}
-
 /** A chunk refused before it was written still counts as the agent at work: its stream is not
  *  idle, so it is not settled under the agent while the agent sends the chunk again. */
 export function markStreamActive(frameId: string) {
@@ -2409,11 +2400,29 @@ export function markStreamActive(frameId: string) {
   if (s) edit(s).lastActivity = Date.now()
 }
 
-export const appendFrameHtml = atomic(function appendFrameHtml(
+export function appendFrameHtml(
   frameId: string,
   chunk: string,
   actor: Actor,
   opts: { start?: boolean; done?: boolean } = {},
+): Frame | undefined {
+  try {
+    return appendChunk(frameId, chunk, actor, opts)
+  } catch (error) {
+    /* a last chunk refused for a <doop-use> it leaves open: the stream stays open for it to come
+       again, and that counts as the agent at work, so the idle sweep does not settle the stream
+       meanwhile. Set past the chunk's undo, and not journaled, so the refusal's undo keeps it */
+    const stream = error instanceof WriteRefusedError ? streams.get(frameId) : undefined
+    if (stream) stream.lastActivity = Date.now()
+    throw error
+  }
+}
+
+const appendChunk = atomic(function appendChunk(
+  frameId: string,
+  chunk: string,
+  actor: Actor,
+  opts: { start?: boolean; done?: boolean },
 ): Frame | undefined {
   const before = store.getFrame(frameId)
   if (!before) return undefined
@@ -2421,13 +2430,20 @@ export const appendFrameHtml = atomic(function appendFrameHtml(
   const starting = opts.start || !streams.has(frameId)
   /* read now: the store updates `before` in place below */
   const base = before.html
-  const { escaped, piece } = streamPiece(frameId, chunk, starting)
+  /* an agent that escapes its opening chunk escapes the whole stream, so latch
+     the verdict there: a chunk mid-design can hold a legitimate `&lt;` (a code
+     sample) and must never be sniffed on its own */
+  const escaped = starting ? looksEscapedHtml(chunk) : (streams.get(frameId)?.escaped ?? false)
+  const piece = escaped ? decodeEscapedHtml(chunk) : chunk
   const canvas = store.getCanvas(before.canvasId)
   /* the chunk's own pass can take up a library component, and the last chunk's whole-frame
      pass below can still be refused (the work budget): the write boundary undoes it then */
   const chunked = canvas
     ? prepareChunk(canvas, piece, opts.start ? '' : before.html, actor.name)
     : { html: piece, issues: [], adopted: [] }
+  /* a tag left open in an override is whole already: no later chunk closes it, and waiting for the
+     done chunk would leave this one saved, so the chunk is refused now */
+  if (actor.kind === 'agent') refuseUnclosedUses(chunked.issues.filter((issue) => issue.inOverride))
   const expanded = chunked.html
   const carried = [...(starting ? [] : (streamIssues.get(frameId) ?? [])), ...chunked.issues]
   /* the last chunk settles the whole document: a <doop-use> split across
@@ -2436,10 +2452,12 @@ export const appendFrameHtml = atomic(function appendFrameHtml(
      canvas's tokens and fonts, so a mid-stream screenshot shows them. A
      token renamed mid-stream waits for the stream to close (pendingRenames):
      until then the block stays as written, under the names the frame uses. */
-  /* the same joining as streamedDocument, which append_frame_html checks before this runs */
   const joined = opts.start ? expanded : before.html + expanded
   const prepared = opts.done
-    ? prepareWrite(before.canvasId, before.id, joined, before.html, actor.name, carried)
+    ? prepareWrite(before.canvasId, before.id, joined, before.html, actor.name, {
+        carried,
+        refuseUnclosed: actor.kind === 'agent',
+      })
     : {
         html: pendingRenames.has(frameId) ? joined : withCanvasFacesMidStream(before.canvasId, joined),
         changed: [] as ComponentDef[],
@@ -2567,7 +2585,9 @@ export const createFrame = atomic(function createFrame(
 ): Frame | undefined {
   if (input.html !== undefined) {
     /* no id yet: a main marker arriving in a new frame is a copy of that main */
-    const prepared = prepareWrite(canvasId, '', repairEscapedHtml(input.html), '', actor.name)
+    const prepared = prepareWrite(canvasId, '', repairEscapedHtml(input.html), '', actor.name, {
+      refuseUnclosed: actor.kind === 'agent',
+    })
     input = { ...input, html: prepared.html }
   }
   const frame = store.createFrame(canvasId, input, actor.name)
@@ -2589,6 +2609,18 @@ export const createFrame = atomic(function createFrame(
   return frame
 })
 
+/** Whether this design write is refused, rather than saved with a note, when it leaves a
+ *  `<doop-use>` open: an agent's whole write. Even the streaming agent's edit is a whole write
+ *  here and ends the stream if it changes HTML. Another agent must wait or explicitly replace it. */
+function refusesUnclosed(frameId: string, actor: Actor, replace: boolean): boolean {
+  if (actor.kind !== 'agent') return false
+  const stream = streams.get(frameId)
+  if (!stream || replace || stream.actor.name === actor.name) return true
+  throw new WriteRefusedError(
+    `Refused, nothing was written: ${stream.actor.name} is streaming this frame. Wait for its stream to finish, or replace the whole design with set_frame_html.`,
+  )
+}
+
 /** `replace` marks a deliberate whole-document write (set_frame_html): it
  *  always opens a history burst, even when the new document keeps most of
  *  the old one's wrapper — only the reveal-or-morph choice stays similarity
@@ -2605,7 +2637,9 @@ export const updateFrame = atomic(function updateFrame(
   if (!before) return undefined
   let changedComponents: ComponentDef[] = []
   if (patch.html !== undefined) {
-    const prepared = prepareWrite(before.canvasId, frameId, repairEscapedHtml(patch.html), before.html, actor.name)
+    const prepared = prepareWrite(before.canvasId, frameId, repairEscapedHtml(patch.html), before.html, actor.name, {
+      refuseUnclosed: refusesUnclosed(frameId, actor, opts.replace === true),
+    })
     patch = { ...patch, html: prepared.html }
     changedComponents = prepared.changed
   }

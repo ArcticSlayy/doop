@@ -5,10 +5,11 @@ import { store } from './store.ts'
 import { layerExport } from './layerExport.ts'
 import { MAX_EXPORT_SCALE, MIN_EXPORT_SCALE } from '../shared/exportScale.ts'
 import { fontsForCanvas } from './fonts.ts'
+import { skillsForCanvas } from './skills.ts'
+import { skillsBlock } from '../shared/skills.ts'
 import { libraryBrief, MAX_FONT_BYTES } from '../shared/fonts.ts'
 import { addCanvasFont, uploadedFontResult } from './canvasFontUpload.ts'
 import { inlineDataRefusal } from './inlineData.ts'
-import { frameWriteRefusal } from './frameWriteRefusal.ts'
 import { webFontsBrief } from '../shared/webFonts.ts'
 import {
   TOKEN_TYPES,
@@ -254,6 +255,35 @@ interface FeedbackItem {
   from: string
   text: string
   about: string
+}
+
+/** What came before a comment in its thread, oldest first: a reply reads against it. */
+function earlierInThread(comment: ElementComment): ElementComment[] {
+  const thread = actions.commentThread(comment)
+  return thread.slice(
+    0,
+    thread.findIndex((x) => x.id === comment.id),
+  )
+}
+
+/** The system block for the skills a run's requests name with `/handle`
+ *  (shared/skills.ts), from the canvas's scope. A follow-up keeps the skill
+ *  its task named and a reply the one named earlier in its thread, so "make it
+ *  bigger" after /brand-check still gets it. Instructions a team wrote for the
+ *  running agent name skills too: a reviewer told to apply /brand-check gets it
+ *  on every run; the shipped briefs are never scanned. */
+export function requestedSkillsPrompt(
+  canvas: { workspaceId?: string | null; ownerId?: string | null },
+  work: { items: FeedbackItem[]; cards: AgentTask[]; comments: ElementComment[] },
+  role?: AgentRole,
+): string | undefined {
+  const text = [
+    role?.custom || role?.briefByTeam ? role.brief : '',
+    ...work.items.flatMap((item) => [item.text, item.about]),
+    ...work.cards.map((card) => card.status),
+    ...work.comments.flatMap((comment) => [comment.text, ...earlierInThread(comment).map((x) => x.text)]),
+  ].join('\n')
+  return skillsBlock(skillsForCanvas(canvas), text)
 }
 
 interface RunState {
@@ -661,12 +691,7 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
             .map((c) => {
               /* a reply carries the conversation it answers, so "make it
                  bigger" reads against what was said before */
-              const history = actions.commentThread(c)
-              const earlier = history
-                .slice(
-                  0,
-                  history.findIndex((x) => x.id === c.id),
-                )
+              const earlier = earlierInThread(c)
                 .map((x) => `    ${x.from}: "${x.text}"`)
                 .join('\n')
               const thread = earlier ? `\n  earlier in this thread:\n${earlier}` : ''
@@ -751,6 +776,10 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
       /* the canvas's custom fonts: which families exist, and that naming one
          is enough (the server adds the @font-face) */
       const canvas = store.getCanvas(canvasId)
+      /* read when the run starts, so a skill edited while the work waited
+         runs as edited; cached with its own breakpoint like the guidelines */
+      const skillsPrompt = canvas && requestedSkillsPrompt(canvas, { items, cards, comments }, role)
+      const skillsBlocks = skillsPrompt ? [{ text: skillsPrompt, cache: true }] : []
       const fontsText = [canvas ? libraryBrief(fontsForCanvas(canvas)) : '', webFontsBrief()]
         .filter(Boolean)
         .join('\n\n')
@@ -827,6 +856,7 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
           system: [
             systemFor(role, roster),
             ...guidelinesBlock.map((b) => b.text),
+            ...skillsBlocks.map((b) => b.text),
             ...fontsBlock.map((b) => b.text),
             ...tokensBlock.map((b) => b.text),
             ...existingStyleBlock.map((b) => b.text),
@@ -876,6 +906,7 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
                 system: [
                   { text: systemFor(role, roster), cache: true },
                   ...guidelinesBlock,
+                  ...skillsBlocks,
                   ...fontsBlock,
                   ...tokensBlock,
                   ...existingStyleBlock,
@@ -1984,8 +2015,8 @@ async function runResidentTool(
         }
         const html = completeHtml(raw.html)
         if (!html) return fail('create_frame requires a complete non-empty HTML document ending in </html>')
-        const refused = frameWriteRefusal(html, { surface: 'resident' })
-        if (refused) return fail(refused)
+        const inline = inlineDataRefusal(html, '', 'resident')
+        if (inline) return fail(inline)
         if (html.length > MAX_REWRITE_CHUNK_CHARS) {
           return fail(`create_frame HTML must be compact (at most ${MAX_REWRITE_CHUNK_CHARS} characters)`)
         }
@@ -2074,13 +2105,14 @@ async function runResidentTool(
           return fail(`"find" text occurs ${count} times — include more surrounding context to make it unique`)
         const replace = input.replace
         const edited = source.replace(input.find, () => replace)
-        /* the edited document, so a URI completed or a tag left open across the replacement's edges is caught too */
-        const refused = frameWriteRefusal(edited, {
-          existing: `${f.html}\n${compact}`,
-          surface: 'resident',
-          streamed: actions.isFrameMidStream(input.frame_id) ? f.html : '',
-        })
-        if (refused) return fail(refused)
+        /* the edited document, so a URI completed across the replacement's edges is caught too */
+        const inline = inlineDataRefusal(
+          edited,
+          `${f.html}
+${compact}`,
+          'resident',
+        )
+        if (inline) return fail(inline)
         actions.updateFrame(input.frame_id, { html: edited }, actor)
         runState.mutatedFrames.add(input.frame_id)
         unverify(runState, input.frame_id)
@@ -2101,9 +2133,10 @@ async function runResidentTool(
             `set_frame_html is limited to ${MAX_REWRITE_CHUNK_CHARS} characters. Use begin_frame_rewrite, append_frame_rewrite chunks, and commit_frame_rewrite.`,
           )
         }
-        const refused = frameWriteRefusal(html, { existing: existingHtml(f), surface: 'resident' })
-        if (refused) return fail(refused)
-        const written = actions.updateFrame(input.frame_id, { html }, actor)
+        const inline = inlineDataRefusal(html, existingHtml(f), 'resident')
+        if (inline) return fail(inline)
+        /* a whole-document write, as MCP set_frame_html: it may replace a design another agent streams */
+        const written = actions.updateFrame(input.frame_id, { html }, actor, { replace: true })
         if (!written) return fail('frame not found on this canvas')
         const fit =
           (block.input as { fit_height?: unknown }).fit_height === true
@@ -2155,11 +2188,10 @@ async function runResidentTool(
         const html = completeHtml(draft)
         if (!html)
           return fail('rewrite draft is not a complete HTML document ending in </html>; append the missing content')
-        /* again at the commit: the frame may have changed since the chunks were checked, and the
-           draft is whole only now, so a <doop-use> left open is caught here */
-        const refused = frameWriteRefusal(html, { existing: existingHtml(f), surface: 'resident' })
-        if (refused) return fail(refused)
-        actions.updateFrame(input.frame_id, { html }, actor)
+        /* again at the commit: the frame may have changed since the chunks were checked */
+        const inline = inlineDataRefusal(html, existingHtml(f), 'resident')
+        if (inline) return fail(inline)
+        actions.updateFrame(input.frame_id, { html }, actor, { replace: true })
         runState.rewriteDrafts.delete(input.frame_id)
         runState.mutatedFrames.add(input.frame_id)
         unverify(runState, input.frame_id)

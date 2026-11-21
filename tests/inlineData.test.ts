@@ -46,7 +46,7 @@ const { inlineDataRefusal, newInlineData } = await import('../server/inlineData.
 const actions = await import('../server/actions.ts')
 const { store } = await import('../server/store.ts')
 const { buildMcpServer } = await import('../server/mcp.ts')
-const { execTool, newRunState } = await import('../server/resident.ts')
+const { execTool } = await import('../server/resident.ts')
 
 /**
  * Agent writes that add a base64 data: URI are refused with what to do
@@ -60,6 +60,7 @@ const faceCss = `<style>@font-face{font-family:Oxanium;src:url('${FONT}') format
 const doc = (body: string) => `<!doctype html><html><head>${body}</head><body><h1>Hi</h1></body></html>`
 const OPEN_CARD = '<doop-use component="Card"><p>Slot copy</p>'
 const openCardDoc = `<!doctype html><html><head></head><body>${OPEN_CARD}</body></html>`
+const escape = (html: string) => html.replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 
 describe('newInlineData', () => {
   it('finds base64 data: URIs of every kind and sizes them', () => {
@@ -251,12 +252,28 @@ describe('over MCP', () => {
     expect(store.getFrame(frameId)!.html).not.toContain('base64')
   })
 
+  const makeComponent = async (name: string, html: string) => {
+    const made = await call('create_component', { canvas_id: canvasId, name, html, auto_props: false })
+    expect(made.isError).toBe(false)
+  }
+  const makeCard = () => makeComponent('Card', '<article class="card"><div data-doop-slot="body"></div></article>')
+
   it('refuses a create, set or edit that leaves a <doop-use> open, and writes nothing', async () => {
     const created = await call('create_frame', { canvas_id: canvasId, name: 'Hero', html: openCardDoc })
     expect(created.isError).toBe(true)
-    expect(created.text).toContain('<doop-use component="Card"> is opened and never closed')
+    expect(created.text).toContain(
+      'Refused, nothing was written: <doop-use component="Card"> is opened and never closed',
+    )
+    expect(frames()).toHaveLength(0)
+
     /* a closed use whose overrides carry markup that leaves one open, which renders on its own */
-    const overrides = JSON.stringify({ k: { html: '<doop-use component="Badge"><p>slot</p>' } })
+    await makeCard()
+    await makeComponent('Badge', '<span class="badge">New</span>')
+    const card = store.getComponents(canvasId).find((component) => component.name === 'Card')!
+    const key = /data-doop-part="([^"]+)"[^>]*data-doop-slot|data-doop-slot="body"[^>]*data-doop-part="([^"]+)"/.exec(
+      card.template,
+    )!
+    const overrides = JSON.stringify({ [key[1] ?? key[2]!]: { html: '<doop-use component="Badge"><p>slot</p>' } })
     const carried = await call('create_frame', {
       canvas_id: canvasId,
       name: 'Hero',
@@ -264,10 +281,10 @@ describe('over MCP', () => {
     })
     expect(carried.isError).toBe(true)
     expect(carried.text).toContain('<doop-use component="Badge"> is opened and never closed')
-    expect(frames()).toHaveLength(0)
+    expect(frames().filter((frame) => frame.name === 'Hero')).toHaveLength(0)
 
     await call('create_frame', { canvas_id: canvasId, name: 'Hero', html: doc('') })
-    const frameId = frames()[0]!.id
+    const frameId = frames().find((frame) => frame.name === 'Hero')!.id
     const before = store.getFrame(frameId)!.html
     const set = await call('set_frame_html', { frame_id: frameId, html: openCardDoc })
     expect(set.isError).toBe(true)
@@ -284,16 +301,6 @@ describe('over MCP', () => {
     })
     expect(closed.isError).toBe(false)
   })
-
-  const makeCard = async () => {
-    const card = await call('create_component', {
-      canvas_id: canvasId,
-      name: 'Card',
-      html: '<article class="card"><div data-doop-slot="body"></div></article>',
-      auto_props: false,
-    })
-    expect(card.isError).toBe(false)
-  }
 
   it('refuses the #528 edit on a frame of real instances, and lets every balanced edit of it through', async () => {
     await makeCard()
@@ -344,10 +351,6 @@ describe('over MCP', () => {
       })
       expect(last.isError).toBe(true)
       expect(last.text).toContain('<doop-use component="Card"> is opened')
-      /* a chunk refused for inline data counts as the agent at work as well */
-      vi.setSystemTime(Date.now() + 25_000)
-      const inline = await call('append_frame_html', { frame_id: frameId, html_chunk: `<img src="${PNG}">` })
-      expect(inline.isError).toBe(true)
       expect(store.getFrame(frameId)!.html).toBe(streamed)
       /* the refusal counts as the agent at work: the idle sweep 15s on leaves the stream open */
       actions.expireIdleStreams(Date.now() + 15_000)
@@ -368,7 +371,7 @@ describe('over MCP', () => {
     }
   })
 
-  it('reads a write as it would be saved: one whole chunk, an escaped one, or onto a frame mid-stream', async () => {
+  it('reads a stream as it would be saved: one whole chunk, or an escaped one', async () => {
     await makeCard()
     await call('create_frame', { canvas_id: canvasId, name: 'Stream', html: doc('') })
     const frameId = frames().find((frame) => frame.name === 'Stream')!.id
@@ -384,7 +387,6 @@ describe('over MCP', () => {
     expect(store.getFrame(frameId)!.html).toBe(designed)
 
     /* an escaped stream is decoded as it is written, so its close counts */
-    const escape = (html: string) => html.replaceAll('<', '&lt;').replaceAll('>', '&gt;')
     await call('append_frame_html', {
       frame_id: frameId,
       html_chunk: escape('<html><head></head><body><doop-use component="Card"><p>slot</p>'),
@@ -403,35 +405,136 @@ describe('over MCP', () => {
     const escaped = await call('create_frame', { canvas_id: canvasId, name: 'Escaped', html: escape(openCardDoc) })
     expect(escaped.isError).toBe(true)
     expect(frames().some((frame) => frame.name === 'Escaped')).toBe(false)
+  })
 
-    /* a frame mid-stream holds its waiting tag: an edit, even one that leaves it alone, would place
-       it, so the editor is told the stream is still going rather than to close the stream's tag */
+  /* a closed use whose overrides hold a use left open: the override is whole, so nothing closes it */
+  const openOverride = async () => {
+    await makeCard()
+    await makeComponent('Badge', '<span class="badge">New</span>')
+    const card = store.getComponents(canvasId).find((component) => component.name === 'Card')!
+    const key = /data-doop-part="([^"]+)"[^>]*data-doop-slot|data-doop-slot="body"[^>]*data-doop-part="([^"]+)"/.exec(
+      card.template,
+    )!
+    const overrides = JSON.stringify({ [key[1] ?? key[2]!]: { slot: '<doop-use component="Badge"><p>x</p>' } })
+    return `<doop-use component="Card" overrides='${overrides}'></doop-use>`
+  }
+
+  it('refuses a stream chunk whose overrides leave a <doop-use> open, at once, and keeps the stream open', async () => {
+    const use = await openOverride()
+    await call('create_frame', { canvas_id: canvasId, name: 'Stream', html: doc('') })
+    const frameId = frames().find((frame) => frame.name === 'Stream')!.id
+    const designed = store.getFrame(frameId)!.html
+    /* one whole chunk */
+    const whole = await call('append_frame_html', {
+      frame_id: frameId,
+      html_chunk: `<html><head></head><body>${use}</body></html>`,
+      start: true,
+      done: true,
+    })
+    expect(whole.isError).toBe(true)
+    expect(whole.text).toContain('<doop-use component="Badge"> is opened and never closed')
+    expect(store.getFrame(frameId)!.html).toBe(designed)
+    expect(actions.isFrameMidStream(frameId)).toBe(false)
+
+    /* a middle chunk: refused before it is saved, the stream still open for it to come again */
+    await call('append_frame_html', {
+      frame_id: frameId,
+      html_chunk: '<html><head></head><body><h1>Top</h1>',
+      start: true,
+    })
+    const streamed = store.getFrame(frameId)!.html
+    const middle = await call('append_frame_html', { frame_id: frameId, html_chunk: use })
+    expect(middle.isError).toBe(true)
+    expect(middle.text).toContain('<doop-use component="Badge">')
+    expect(store.getFrame(frameId)!.html).toBe(streamed)
+    expect(actions.isFrameMidStream(frameId)).toBe(true)
+
+    /* a use of its own left open mid-stream is fine: a later chunk closes it */
+    const open = await call('append_frame_html', {
+      frame_id: frameId,
+      html_chunk: '<doop-use component="Card"><p>slot</p>',
+    })
+    expect(open.isError).toBe(false)
+    const done = await call('append_frame_html', {
+      frame_id: frameId,
+      html_chunk: '</doop-use></body></html>',
+      done: true,
+    })
+    expect(done.isError).toBe(false)
+    const html = store.getFrame(frameId)!.html
+    expect(html.indexOf('<p>slot</p>')).toBeGreaterThan(html.indexOf('<article'))
+    expect(html.indexOf('<p>slot</p>')).toBeLessThan(html.indexOf('</article>'))
+  })
+
+  it('refuses a create or set whose overrides leave a <doop-use> open', async () => {
+    const use = await openOverride()
+    const created = await call('create_frame', { canvas_id: canvasId, name: 'Hero', html: doc(use) })
+    expect(created.isError).toBe(true)
+    expect(created.text).toContain('<doop-use component="Badge"> is opened and never closed')
+    expect(frames().filter((frame) => frame.name === 'Hero')).toHaveLength(0)
+    await call('create_frame', { canvas_id: canvasId, name: 'Hero', html: doc('') })
+    const frameId = frames().find((frame) => frame.name === 'Hero')!.id
+    const before = store.getFrame(frameId)!.html
+    const set = await call('set_frame_html', { frame_id: frameId, html: doc(use) })
+    expect(set.isError).toBe(true)
+    expect(store.getFrame(frameId)!.html).toBe(before)
+  })
+
+  it('keeps an unfinished component intact when either agent edits the stream', async () => {
+    await makeCard()
+    await call('create_frame', { canvas_id: canvasId, name: 'Stream', html: doc('') })
+    const frameId = frames().find((frame) => frame.name === 'Stream')!.id
     await call('append_frame_html', {
       frame_id: frameId,
       html_chunk: '<html><head></head><body><h1>Top</h1><doop-use component="Card"><p>slot</p>',
       start: true,
     })
     const streamed = store.getFrame(frameId)!.html
-    const edit = await call('edit_frame_html', {
+    /* another agent's edit would place the stream's waiting tag: refused, whatever it changes */
+    const other = await call('edit_frame_html', {
+      agent_name: 'Codex',
       frame_id: frameId,
       old_str: '<h1>Top</h1>',
       new_str: '<h1>Top!</h1>',
     })
-    expect(edit.isError).toBe(true)
-    expect(edit.text).toContain('still streaming')
-    /* an edit that leaves a tag of its own open is told to close it, not to wait */
-    const own = await call('edit_frame_html', {
-      frame_id: frameId,
-      old_str: '<h1>Top</h1>',
-      new_str: '<h1>Top</h1><doop-use component="Card">',
-    })
-    expect(own.text).toContain('opened and never closed')
+    expect(other.isError).toBe(true)
+    expect(other.text).toContain('Claude is streaming this frame')
+    expect(other.text).toContain('set_frame_html')
     expect(store.getFrame(frameId)!.html).toBe(streamed)
     expect(actions.isFrameMidStream(frameId)).toBe(true)
-    /* a set replaces the whole document, waiting tag and all: a balanced one goes through */
-    const set = await call('set_frame_html', { frame_id: frameId, html: doc('') })
+
+    /* An edit is a whole write even for the streaming agent. Keep the waiting slot intact. */
+    const own = await call('edit_frame_html', { frame_id: frameId, old_str: '<h1>Top</h1>', new_str: '<h1>Top!</h1>' })
+    expect(own.isError).toBe(true)
+    expect(own.text).toContain('never closed')
+    expect(store.getFrame(frameId)!.html).toBe(streamed)
+    expect(actions.isFrameMidStream(frameId)).toBe(true)
+    const done = await call('append_frame_html', {
+      frame_id: frameId,
+      html_chunk: '</doop-use></body></html>',
+      done: true,
+    })
+    expect(done.isError).toBe(false)
+    expect(store.getFrame(frameId)!.html).toMatch(/<article\b[^>]*>[\s\S]*<p>slot<\/p>[\s\S]*<\/article>/)
+
+    /* a set replaces the whole document, waiting tag and all: from any agent, a balanced one goes through */
+    await call('append_frame_html', {
+      frame_id: frameId,
+      html_chunk: '<html><head></head><body><doop-use component="Card"><p>slot</p>',
+      start: true,
+    })
+    const set = await call('set_frame_html', { agent_name: 'Codex', frame_id: frameId, html: doc('') })
     expect(set.isError).toBe(false)
     expect(actions.isFrameMidStream(frameId)).toBe(false)
+  })
+
+  it('leaves a person’s stream of the same markup a note', async () => {
+    await call('create_frame', { canvas_id: canvasId, name: 'Stream', html: doc('') })
+    const frameId = frames().find((frame) => frame.name === 'Stream')!.id
+    const person = actions.resolveActor({ name: 'Kevin', kind: 'user' })
+    actions.appendFrameHtml(frameId, openCardDoc, person, { start: true, done: true })
+    expect(actions.isFrameMidStream(frameId)).toBe(false)
+    expect(actions.takeComponentIssues(frameId).map((issue) => issue.code)).toContain('unclosed_use')
   })
 
   const imported = () =>
@@ -614,7 +717,20 @@ describe('over MCP', () => {
 })
 
 describe('the resident agent', () => {
-  const run = () => newRunState()
+  const run = () => ({
+    mutatedFrames: new Set<string>(),
+    sourceFrames: new Set<string>(),
+    verificationFrames: new Set<string>(),
+    verifiedFrames: new Set<string>(),
+    seenVerified: new Set<string>(),
+    rewriteDrafts: new Map<string, string>(),
+    vision: false,
+    imagesGenerated: 0,
+    repliedThreads: new Set<string>(),
+    awaitingThreads: new Set<string>(),
+    tokenWrites: 0,
+    arrangeWrites: 0,
+  })
   const actor = () => actions.resolveActor({ name: 'Doop', kind: 'agent' })
   const call = (name: string, input: unknown) => ({ type: 'tool_use' as const, id: 't1', name, input })
 
@@ -676,7 +792,7 @@ describe('the resident agent', () => {
       state,
     )
     expect(created.is_error).toBe(true)
-    expect(String(created.content)).toContain('never closed')
+    expect(String(created.content)).toContain('<doop-use component="Card"> is opened and never closed')
     expect(store.getCanvas(canvasId)!.frames).toHaveLength(0)
 
     const frameId = actions.createFrame(canvasId, { name: 'Hero', html: doc(''), width: 400, height: 300 }, actor())!.id
@@ -699,6 +815,7 @@ describe('the resident agent', () => {
     expect(chunk.is_error).toBeUndefined()
     const commit = await execTool(call('commit_frame_rewrite', { frame_id: frameId }), canvasId, actor(), state)
     expect(commit.is_error).toBe(true)
+    expect(String(commit.content)).toContain('never closed')
     expect(store.getFrame(frameId)!.html).toBe(before)
   })
 })
